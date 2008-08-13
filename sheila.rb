@@ -1,82 +1,52 @@
 require 'rubygems'
 require 'camping'
 require 'camping/session'
-require 'digest/sha1'
 require 'ditz'
+require 'socket'
 
 Camping.goes :Sheila
 
-Sheila::DIR = "/home/why/svn/shoes/bugs"
-Sheila::COMMIT = "git commit -a -m ' * bugs/: $title$'"
+class String
+  def obfu; gsub(/( <.+?)@.+>$/, '\1@...>') end
+  def prefix; self[0,8] end
+end
 
-Sheila::CONFIG = Ditz::Config.new
-Sheila::CONFIG.name = 'Sheila'
-Sheila::CONFIG.email = 'sheila@rubyforge.org'
+hostname = begin
+  Socket.gethostbyname(Socket.gethostname).first
+rescue SocketError
+  Socket.gethostname
+end
 
-module Sheila; include Camping::Session end
+## tweak these
+CREATOR_NAME = "Sheila"
+CREATOR_EMAIL = "sheila@#{hostname}"
+COMMIT_COMMAND = "git commit -a -m ' * bugs/: $title$'" # currently unused
+CONFIG_FN = ".ditz-config"
+PLUGIN_FN = ".ditz-plugins"
+
+Ditz::verbose = true
 
 class << Sheila
-  attr_reader :project
-  def obfu name
-    name.gsub(/( <.+?)@.+>$/, '\1@...>')
-  end
-  def reporter; '_why <why@whytheluckystiff.net>' end
-  def create; load_project; end
-  def load_project
-    @project = Ditz::Project.from File.join(Sheila::DIR, "project.yaml")
-    issue_glob = File.join(Sheila::DIR, "issue-*.yaml")
-    @project.issues = Dir[issue_glob].
-      map { |fn| Ditz::Issue.from fn }.
-      sort_by { |issue| issue.sort_order }
-    @project.validate!
-    @project.issues.each { |p| p.project = @project}
-    @project.assign_issue_names!
-  end
-end
+  attr_reader :project, :config, :storage
+  def create
+    ## load plugins
+    plugin_fn = File.join Ditz::find_dir_containing(PLUGIN_FN) || ".", PLUGIN_FN
+    Ditz::load_plugins(plugin_fn) if File.exist?(plugin_fn)
 
-def ISSUE_TO_FN i; "issue-#{i.id}.yaml" end
+    ## load config
+    config_fn = File.join Ditz::find_dir_containing(CONFIG_FN) || ".", CONFIG_FN
+    Ditz::debug "loading config from #{config_fn}"
+    @config = Ditz::Config.from config_fn
+    @config.name = CREATOR_NAME # just overwrite these two fields
+    @config.email = CREATOR_EMAIL
 
-class Ditz::ModelObject
-  def self.create hsh
-    o = self.new
-    args = [Sheila::CONFIG, Sheila.project]
-    @fields.each do |name, field_opts|
-      val =
-        if field_opts[:ask] == false
-          if field_opts[:generator].is_a? Proc
-            field_opts[:generator].call *args
-          elsif field_opts[:generator]
-            o.send field_opts[:generator], *args
-          else
-            field_opts[:default] || (field_opts[:multi] ? [] : nil)
-          end
-        else
-          hsh[name.to_s]
-        end
-      o.send("#{name}=", val)
-    end
-    o
+    ## load project
+    @storage = Ditz::FileStorage.new File.join(File.dirname(config_fn), @config.issue_dir)
+    @project = @storage.load
   end
 end
 
-class Ditz::Issue
-  def self.create hsh
-    hsh['type'] = 
-      if ['bugfix', 'feature'].include? hsh['type']
-        hsh['type'].intern
-      end
-    hsh['reporter'] = Sheila.reporter
-    hsh['component'] ||= Sheila.project.components.first.name
-    super hsh
-  end
-  def reporter_name
-    Sheila.obfu(reporter)
-  end
-  def uniqid; id[0,6] end
-end
-
-def sha1 str; SHA1::Digest.hexdigest str end
-
+## these models are currently unused.
 module Sheila::Models
   class User < Base
     validates_presence_of :username
@@ -114,7 +84,9 @@ module Sheila::Models
       drop_table :sheila_users
     end
   end
-end
+end if false
+
+module Sheila; include Camping::Session end
 
 module Sheila::Controllers
   class Index
@@ -132,13 +104,11 @@ module Sheila::Controllers
       render :editor
     end
     def post
-      @issue = Ditz::Issue.create(@input['ticket'])
-      @issue.log "created", Sheila::CONFIG.user, ''
+      @input['ticket']['release'] = nil if @input['ticket']['release'] = "No release"
+      @issue = Ditz::Issue.create(@input['ticket'], [Sheila.config, Sheila.project])
+      @issue.log "created", Sheila.config.user, ''
       Sheila.project.add_issue @issue
-      Sheila.project.assign_issue_names!
-      @issue.pathname = File.join Sheila::DIR, ISSUE_TO_FN(@issue)
-      @issue.project = Sheila.project
-      @issue.save! @issue.pathname
+      Sheila.storage.save Sheila.project
       redirect TicketX, @issue.id
     end
   end
@@ -149,8 +119,8 @@ module Sheila::Controllers
     end
   end
   class ReleaseX
-    def get name
-      @release = Sheila.project.release_for name
+    def get num
+      @release = Sheila.project.releases[num.to_i] # see docs for Views#ticket
       @created, @desc = @release.log_events[0].first, @release.log_events[0].last
       render :release
     end
@@ -182,8 +152,8 @@ module Sheila::Views
 
   def index
     h2 "Open Tickets"
+    p { a "Add a ticket", :href => R(New) }
     ticket_table Sheila.project.issues
-    p { a "New ticket", :href => R(New) }
   end
 
   def ticket_table issues, exclude = [:closed]
@@ -193,12 +163,12 @@ module Sheila::Views
         th "Title"
         th "State"
       end
-      issues.reverse.each do |issue|
+      issues.sort_by { |i| i.creation_time }.reverse.each do |issue|
         unless exclude.include? issue.status
           tr do
-            td.unique issue.uniqid
+            td.unique issue.id.prefix
             td.title  { h3 { a issue.title, :href => R(TicketX, issue.id) }
-              p.about { strong("#{issue.creation_time.ago} ago") + span(" by #{issue.reporter_name}") } }
+              p.about { strong("#{issue.creation_time.ago} ago") + span(" by #{issue.reporter.obfu}") } }
             td.status { issue.status.to_s }
           end
         end
@@ -220,14 +190,19 @@ module Sheila::Views
 
   def ticket
     h2 @issue.title
-    h3 { span.unique.right @issue.uniqid; span "started #{@issue.creation_time.ago} ago by #{@issue.reporter_name}" }
+    h3 { span.unique.right @issue.id.prefix; span "started #{@issue.creation_time.ago} ago by #{@issue.reporter.obfu}" }
     div.details do
       dewikify(@issue.desc)
     end
     div.details do
       if @issue.release
         p { strong "Type: "; span @issue.type.to_s }
-        p { strong "Release: "; a @issue.release, :href => R(ReleaseX, @issue.release) }
+        ## unfortunately this next thing always raises a "bad route" if the
+        ## release name has any dots or dashes in it
+        #p { strong "Release: "; a @issue.release, :href => R(ReleaseX, @issue.release) }
+        ## instead, we do this bad thing:
+        foul = Sheila.project.releases.map { |r| r.name }.index @issue.release
+        p { strong "Release: "; a @issue.release, :href => R(ReleaseX, foul) }
         p { strong "Status: "; span @issue.status.to_s }
       end
     end
@@ -240,16 +215,12 @@ module Sheila::Views
       log.each do |at, name, action, comment|
         li do
           div.ago "#{at.ago} ago"
-          div.who Sheila.obfu(name)
+          div.who name.obfu
           div.action action
           div.comment comment if comment
         end
       end
     end
-  end
-
-  def sel bool
-    bool ? [:selected => true] : []
   end
 
   def editor
@@ -259,17 +230,29 @@ module Sheila::Views
         div.required.right do
           label 'Type'
           select :name => 'ticket[type]' do
-            option 'feature', *sel(@issue.type == :feature)
-            option 'bugfix',  *sel(@issue.type == :bugfix)
+            Ditz::Issue::TYPES.each { |t| option t.to_s, :selected => @issue.type == t }
+          end
+        end
+        div.required.right do
+          label 'Component', :for => 'ticket[component]'
+          select :name => 'ticket[component]' do
+            Sheila.project.components.each { |c| option c.name, :selected => @issue.component == c.name }
           end
         end
         div.required do
-          label 'Summary', :for => 'ticket[title]'
+          label 'Title', :for => 'ticket[title]'
           input :name => 'ticket[title]', :type => 'text', :value => @issue.title
         end
         div.required do
-          label 'Reporter', :for => 'ticket[reporter]'
-          h3.field Sheila.reporter
+          label 'Your name & email', :for => 'ticket[reporter]'
+          input :name => 'ticket[reporter]', :type => 'text'
+        end
+        div.required do
+          label 'Release', :for => 'ticket[release]'
+          select :name => 'ticket[release]' do
+            Sheila.project.releases.each { |rel| option rel.name, :selected => @issue.release == rel.name }
+            option "No release", :selected => @issue.release == nil
+          end
         end
         div.required do
           label 'Description', :for => 'ticket[desc]'
@@ -279,7 +262,7 @@ module Sheila::Views
           label 'Component', :for => 'ticket[component]'
           select :name => 'ticket[component]' do
             Sheila.project.components.each do |c|
-              option c.name, *sel(@issue.component == c)
+              option c.name, :selected => @issue.component == c.name
             end
           end
         end
