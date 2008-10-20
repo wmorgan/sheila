@@ -1,8 +1,11 @@
 require 'rubygems'
-require 'camping'
-require 'camping/session'
 require 'ditz'
 require 'socket'
+
+$:.push File.expand_path(File.join(File.dirname(__FILE__), "../camping/lib"))
+require 'camping'
+require 'camping/server'
+require 'trollop'
 
 Camping.goes :Sheila
 
@@ -17,7 +20,7 @@ rescue SocketError
   Socket.gethostname
 end
 
-## tweak these
+## tweak these if you want!
 CREATOR_NAME = "Sheila"
 CREATOR_EMAIL = "sheila@#{hostname}"
 COMMIT_COMMAND = "git commit -a -m ' * bugs/: $title$'" # currently unused
@@ -26,6 +29,7 @@ PLUGIN_FN = ".ditz-plugins"
 
 Ditz::verbose = true
 
+## config holders
 class << Sheila
   attr_reader :project, :config, :storage
   def create
@@ -45,48 +49,6 @@ class << Sheila
     @project = @storage.load
   end
 end
-
-## these models are currently unused.
-module Sheila::Models
-  class User < Base
-    validates_presence_of :username
-    validates_uniqueness_of :username
-    validates_format_of :username, :with => /^[\w\- ]+$/i, 
-      :message => 'must be letters, numbers, spaces, dashes only.', :on => :create
-    validates_presence_of :password
-    validates_confirmation_of :password, :on => :create
-    validates_presence_of :email
-    validates_format_of :email, :with => /^([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})$/i, :on => :create
-
-    before_save :cipher_password!
-    private
-      def cipher_password!
-        unless password.to_s =~ /^[\dabcdef]{32}$/
-          write_attribute("password", sha1(password))
-          @password_confirmation = sha1(@password_confirmation) if @password_confirmation
-        end
-      end
-  end
-
-  class InitialSetup < V 1.0
-    def self.up
-      create_table :sheila_users do |t|
-        t.column :id, :integer, :null => false
-        t.column :username, :string, :limit => 25, :null => false
-        t.column :password, :string, :limit => 40, :null => false
-        t.column :email,    :string, :limit => 255
-        t.column :github,   :string, :limit => 255
-        t.column :created_at, :datetime
-        t.column :updated_at, :datetime
-      end
-    end
-    def self.down
-      drop_table :sheila_users
-    end
-  end
-end if false
-
-module Sheila; include Camping::Session end
 
 module Sheila::Controllers
   class Index
@@ -421,3 +383,42 @@ ul.events div.comment {
   color: #999;
 }
 END
+
+##### EXECUTION STARTS HERE #####
+opts = Trollop::options do
+  version "sheila (ditz version #{Ditz::VERSION})"
+
+  opt :verbose, "Verbose output", :default => false
+  opt :host, "Host on which to run", :default => "0.0.0.0"
+  opt :port, "Port on which to run", :default => 1234
+  opt :server, "Camping server type to use (mongrel, webrick, console)", :default => "mongrel"
+end
+
+if opts[:server] == "mongrel"
+  begin
+    require 'mongrel'
+  rescue LoadError
+    $stderr.puts "!! could not load mongrel. Falling back to webrick."
+    opts[:server] = "webrick"
+  end
+end
+
+## next part stolen from camping/server.rb.
+## all fancy reloading viciously stripped out.
+handler, conf = case opts[:server]
+when "console"
+  ARGV.clear
+  IRB.start
+  exit
+when "mongrel"
+  puts "** Starting Mongrel on #{opts[:host]}:#{opts[:port]}"
+  [Rack::Handler::Mongrel, {:Port => opts[:port], :Host => opts[:host]}]
+when "webrick"
+  [Rack::Handler::WEBrick, {:Port => opts[:port], :BindAddress => opts[:host]}]
+end
+
+Sheila.create
+rapp = Rack::Lint.new Sheila
+rapp = Camping::Server::XSendfile.new rapp
+rapp = Rack::ShowExceptions.new rapp
+handler.run rapp, conf
