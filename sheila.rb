@@ -22,9 +22,8 @@ rescue SocketError
 end
 
 ## tweak these if you want!
-GIT_CREATOR_NAME = "Sheila"
-GIT_CREATOR_EMAIL = "sheila@#{hostname}"
-GIT_COMMIT_COMMAND = "git commit -a -m 'issue update'"
+GIT_AUTHOR_NAME = "Sheila"
+GIT_AUTHOR_EMAIL = "sheila@#{hostname}"
 CONFIG_FN = ".ditz-config"
 PLUGIN_FN = ".ditz-plugins"
 
@@ -50,12 +49,21 @@ class << Sheila
     config_fn = File.join Ditz::find_dir_containing(CONFIG_FN) || ".", CONFIG_FN
     Ditz::debug "loading config from #{config_fn}"
     @config = Ditz::Config.from config_fn
-    @config.name = GIT_CREATOR_NAME # just overwrite these two fields
-    @config.email = GIT_CREATOR_EMAIL
+    @config.name = GIT_AUTHOR_NAME # just overwrite these two fields
+    @config.email = GIT_AUTHOR_EMAIL
 
     ## load project
     @storage = Ditz::FileStorage.new File.join(File.dirname(config_fn), @config.issue_dir)
     @project = @storage.load
+  end
+
+  def save! message
+    message = message.gsub(/'/, "")
+    @storage.save @project
+    ENV["GIT_AUTHOR_NAME"] = GIT_AUTHOR_NAME
+    ENV["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
+    system "git add #{File.dirname @project.pathname}/*.yaml"
+    system "git commit -m 'issue update via Sheila: #{message}'"
   end
 end
 
@@ -102,7 +110,7 @@ module Sheila::Controllers
         comment += "\n\n(submitted via Sheila by #{@env['REMOTE_HOST']} (#{@env['REMOTE_ADDR']}))"
 
         @issue.log "commented", @input.resolve("comment[author]"), comment
-        Sheila.storage.save Sheila.project
+        Sheila.save! "comment on #{sha.prefix}"
         @input["comment"] = {} # clear fields
       end
 
@@ -131,7 +139,7 @@ module Sheila::Controllers
           @issue = Ditz::Issue.create @input['ticket'], [Sheila.config, Sheila.project]
           @issue.log "created", @input.resolve("ticket[reporter]"), "Created via Sheila by #{@env['REMOTE_HOST']} (#{@env['REMOTE_ADDR']})"
           Sheila.project.add_issue @issue
-          Sheila.storage.save Sheila.project
+          Sheila.save! "added issue #{@issue.id.prefix}"
         rescue Ditz::ModelError => e
           @errors << e.message
         end
@@ -223,7 +231,7 @@ module Sheila::Views
       end
       tr do
         td.unique ""
-        td.title { a "Add an issue", :href => R(New) }
+        td.title { a "Add a new issue", :href => R(New) }
         td.status ""
       end if add_link
       issues.each do |issue|
