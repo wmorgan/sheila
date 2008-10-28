@@ -162,12 +162,14 @@ module Sheila::Controllers
     def get num
       @release = Sheila.project.releases[num.to_i] # see docs for Views#ticket
       @created, @desc = @release.log_events[0].first, @release.log_events[0].last
+      @filter = @release
       render :release
     end
   end
   class Unassigned
-    def get num
+    def get
       @release = nil
+      @filter = :unassigned
       render :release
     end
   end
@@ -196,15 +198,27 @@ module Sheila::Views
     end
   end
 
-  def index
-    h2 "#{@filter.to_s.capitalize} issues"
-    div do
-      a "[all issues]", :href => R(Index) unless @filter == :all
-      span " "
-      a "[open issues]", :href => R(Open) unless @filter == :open
-      span " "
-      a "[closed issues]", :href => R(Closed) unless @filter == :closed
+  def filter_list
+    div.filterlist do
+      span "Issue filter: "
+      a "[all]", :href => R(Index) unless @filter == :all
+      text " "
+      a "[open]", :href => R(Open) unless @filter == :open
+      text " "
+      a "[closed]", :href => R(Closed) unless @filter == :closed
+      text " "
+
+      Sheila.project.releases.each_with_index do |r, i|
+        a "[#{r.name}]", :href => R(ReleaseX, i) unless @filter == r
+        text " "
+      end
+      a "[unassigned]", :href => R(Unassigned) unless @filter == :unassigned
     end
+  end
+
+  def index
+    filter_list
+    h2 "#{@filter.to_s.capitalize} issues"
 
     issues = Sheila.project.issues.select do |i|
       case @filter
@@ -259,17 +273,21 @@ module Sheila::Views
   end
 
   def release
-    h2 @release.name
+    filter_list
+    h2(@release ? @release.name : "Unassigned issues")
+
     if @release.release_time
       h3 "Released #{@release.release_time.ago} ago"
     else
       h3 "Started #{@created.ago} ago"
-    end
+    end if @release
+
     div.description do
-      text link_issue_names(@desc)
+      text link_issue_names(@desc) if @desc
     end
+
     h4 "Issues"
-    ticket_table @release.issues_from(Sheila.project)
+    ticket_table(@release ? @release.issues_from(Sheila.project) : Sheila.project.unassigned_issues)
   end
 
   def ticket
@@ -575,6 +593,9 @@ ul.events div.comment {
 }
 .unique {
   color: #999;
+}
+div.filterlist {
+  text-align: right;
 }
 END
 
