@@ -260,25 +260,25 @@ module Sheila::Views
       fieldset.filters do
         span "Issue status: "
         select.filter :name => "type" do
-          option "all", straighten_opts(:selected => ["all", "", nil].member?(@input["type"]), :value => "")
-          option "open", straighten_opts(:selected => @input["type"] == "open", :value => "open")
-          option "closed", straighten_opts(:selected => @input["type"] == "closed", :value => "closed")
-          option "in progress", straighten_opts(:selected => @input["type"] == "in_progress", :value => "in_progress")
+          option "all", prune_opts(:selected => ["all", "", nil].member?(@input["type"]), :value => "")
+          option "open", prune_opts(:selected => @input["type"] == "open", :value => "open")
+          option "closed", prune_opts(:selected => @input["type"] == "closed", :value => "closed")
+          option "in progress", prune_opts(:selected => @input["type"] == "in_progress", :value => "in_progress")
         end
         span " Release: "
         select.filter :name => "release" do
-          option "all", straighten_opts(:selected => ["all", "", nil].member?(@input["release"]), :value => "")
+          option "all", prune_opts(:selected => ["all", "", nil].member?(@input["release"]), :value => "")
           Sheila.project.releases.sort_by { |r| r.release_time || Time.now }.reverse.each do |r|
-            option r.fancy_name, straighten_opts(:value => r.name, :selected => @input["release"] == r.name)
+            option r.fancy_name, prune_opts(:value => r.name, :selected => @input["release"] == r.name)
           end
-          option "Unassigned", straighten_opts(:selected => @input["release"] == "unassigned", :value => "")
+          option "Unassigned", prune_opts(:selected => @input["release"] == "unassigned", :value => "")
         end
         if Sheila.project.components.size > 1
           span " Component: "
           select.filter :name => "component" do
-            option "all", straighten_opts(:selected => ["all", "", nil].member?(@input["component"]), :value => "")
+            option "all", prune_opts(:selected => ["all", "", nil].member?(@input["component"]), :value => "")
             Sheila.project.components.each do |c|
-              option c.name, straighten_opts(:value => c.name, :selected => @input["component"] == c.name)
+              option c.name, prune_opts(:value => c.name, :selected => @input["component"] == c.name)
             end
           end
         end
@@ -433,7 +433,7 @@ module Sheila::Views
   ## removes any instances of the tags in +remove+ that have values of
   ## false or nil. this is because they can't appear in the HTML, even
   ## if they're empty.
-  def straighten_opts opts, remove=[:selected, :checked]
+  def prune_opts opts, remove=[:selected, :checked]
     remove.each { |k| opts.delete(k) unless opts[k] }
     opts
   end
@@ -470,7 +470,7 @@ module Sheila::Views
             end
 
             Ditz::Issue::TYPES.each do |t|
-              input straighten_opts(:type => 'radio', :name => 'ticket[type]', :value => t.to_s, :id => "ticket[type]-#{t}", :checked => (current_type == t))
+              input prune_opts(:type => 'radio', :name => 'ticket[type]', :value => t.to_s, :id => "ticket[type]-#{t}", :checked => (current_type == t))
               label " #{t} ", :for => "ticket[type]-#{t}"
             end
           end
@@ -478,16 +478,16 @@ module Sheila::Views
         div.required do
           label.fieldname 'Release, if any', :for => 'ticket[release]'
           select.standard :name => 'ticket[release]' do
-            option "No release", straighten_opts(:selected => @input.resolve("ticket[release]").empty?, :value => "")
+            option "No release", prune_opts(:selected => @input.resolve("ticket[release]").empty?, :value => "")
             Sheila.project.releases.sort_by { |r| r.release_time || Time.now }.reverse.each do |r|
-              option r.fancy_name, straighten_opts(:value => r.name, :selected => @input.resolve("ticket[release]") == r.name)
+              option r.fancy_name, prune_opts(:value => r.name, :selected => @input.resolve("ticket[release]") == r.name)
             end
           end
         end
         if Sheila.project.components.size > 1
           label.fieldname "Component", :for => 'ticket[component]'
           select.standard :name => 'ticket[component]' do
-            Sheila.project.components.each { |c| option straighten_opts(c.name, :selected => @input.resolve("ticket[component]") == c.name) }
+            Sheila.project.components.each { |c| option prune_opts(c.name, :selected => @input.resolve("ticket[component]") == c.name) }
           end
         end
         div.buttons do
