@@ -231,6 +231,7 @@ module Sheila::Views
   end
 
   def ticket_table issues, show_add_link
+    h4 "Issues"
     table.tickets! do
       tr do
         th "ID"
@@ -280,7 +281,6 @@ module Sheila::Views
       text link_issue_names(@desc) if @desc
     end
 
-    h4 "Issues"
     ticket_table(@issues, @release.nil? || @release.unreleased?)
   end
 
@@ -465,7 +465,7 @@ body { font: 0.75em/1.5 'Lucida Grande', sans-serif; color: #333; }
 * { margin: 0; padding: 0; }
 a { text-decoration: none; color: blue; }
 a:hover { text-decoration: underline; }
-h2 { font-size: 36px; font-weight: normal; line-height: 120%; }
+h2 { font-size: 36px; font-weight: normal; line-height: 120%; padding-bottom: 0.5em; }
 
 label.fieldname {
   font-size: large;
@@ -563,7 +563,6 @@ ul.events li {
 }
 div.description {
   padding: 10px;
-  padding-top: 2em;
   white-space: pre;
   font-size: large;
 }
