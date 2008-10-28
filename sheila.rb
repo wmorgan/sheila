@@ -142,7 +142,7 @@ module Sheila::Controllers
 
       if @errors.empty?
         comment = @input.resolve "comment[text]"
-        comment += "\n\n(submitted via Sheila by #{@env['REMOTE_HOST']} (#{@env['REMOTE_ADDR']}))"
+        comment += "\n\n(submitted via Sheila by #{@env['REMOTE_ADDR']} (#{@env['REMOTE_HOST']}))"
 
         Sheila.add_comment! @issue, @input.resolve("comment[author]"), comment
         @input["comment"] = {} # clear fields
@@ -162,7 +162,7 @@ module Sheila::Controllers
     end
     def post
       @input['ticket']['release'] = nil if @input['ticket']['release'] == ""
-      @input['ticket']['type'] = @input['ticket']['type'].intern unless @input['ticket']['type'].empty?
+      @input['ticket']['type'] = @input.resolve("ticket[type]").intern unless @input.resolve("ticket[type]") == ""
       @input['ticket']['component'] ||= Sheila.project.components.first.name
 
       # extra validation. probably not great that it's here.
@@ -292,7 +292,7 @@ module Sheila::Views
           td.title do
             h3 { a issue.title, :href => R(TicketX, issue.id) }
             p.about do
-              strong("#{issue.creation_time.ago} ago")
+              strong("#{(issue.last_event_time || issue.creation_time).ago} ago")
               span(" by #{issue.reporter.obfu}")
               comments = issue.log_events.select { |e| e[2] == "commented" } # :(
               unless comments.empty?
