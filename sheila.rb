@@ -61,15 +61,29 @@ class << Sheila
     @mutex = Mutex.new
   end
 
+  def add_issue! issue
+    @mutex.synchronize do
+      @project.add_issue issue
+      save! "added issue #{issue.id.prefix}"
+    end
+  end
+
+  def add_comment! issue, author, comment
+    @mutex.synchronize do
+      issue.log "commented", author, comment
+      save! "comment on #{issue.id.prefix}"
+    end
+  end
+
+private
+
   def save! message
     message = message.gsub(/'/, "")
-    @mutex.synchronize do
-      @storage.save @project
-      ENV["GIT_AUTHOR_NAME"] = GIT_AUTHOR_NAME
-      ENV["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
-      system "git add #{File.dirname @project.pathname}/*.yaml"
-      system "git commit -m 'issue update via Sheila: #{message}'"
-    end
+    @storage.save @project
+    ENV["GIT_AUTHOR_NAME"] = GIT_AUTHOR_NAME
+    ENV["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
+    system "git add #{File.dirname @project.pathname}/*.yaml"
+    system "git commit -m 'issue update via Sheila: #{message}'"
   end
 end
 
@@ -130,8 +144,7 @@ module Sheila::Controllers
         comment = @input.resolve "comment[text]"
         comment += "\n\n(submitted via Sheila by #{@env['REMOTE_HOST']} (#{@env['REMOTE_ADDR']}))"
 
-        @issue.log "commented", @input.resolve("comment[author]"), comment
-        Sheila.save! "comment on #{sha.prefix}"
+        Sheila.add_comment! @issue, @input.resolve("comment[author]"), comment
         @input["comment"] = {} # clear fields
       end
 
@@ -159,8 +172,7 @@ module Sheila::Controllers
         begin 
           @issue = Ditz::Issue.create @input['ticket'], [Sheila.config, Sheila.project]
           @issue.log "created", @input.resolve("ticket[reporter]"), "Created via Sheila by #{@env['REMOTE_HOST']} (#{@env['REMOTE_ADDR']})"
-          Sheila.project.add_issue @issue
-          Sheila.save! "added issue #{@issue.id.prefix}"
+          Sheila.add_issue! @issue
         rescue Ditz::ModelError => e
           @errors << e.message
         end
