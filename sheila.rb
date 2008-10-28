@@ -2,6 +2,7 @@ require 'rubygems'
 require 'ditz'
 require 'socket'
 require 'trollop'
+require 'fastthread'
 
 ## require ditz's camping
 # $:.push File.expand_path(File.join(File.dirname(__FILE__), "../camping/lib"))
@@ -55,15 +56,19 @@ class << Sheila
     ## load project
     @storage = Ditz::FileStorage.new File.join(File.dirname(config_fn), @config.issue_dir)
     @project = @storage.load
+
+    @mutex = Mutex.new
   end
 
   def save! message
     message = message.gsub(/'/, "")
-    @storage.save @project
-    ENV["GIT_AUTHOR_NAME"] = GIT_AUTHOR_NAME
-    ENV["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
-    system "git add #{File.dirname @project.pathname}/*.yaml"
-    system "git commit -m 'issue update via Sheila: #{message}'"
+    @mutex.synchronize do
+      @storage.save @project
+      ENV["GIT_AUTHOR_NAME"] = GIT_AUTHOR_NAME
+      ENV["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
+      system "git add #{File.dirname @project.pathname}/*.yaml"
+      system "git commit -m 'issue update via Sheila: #{message}'"
+    end
   end
 end
 
