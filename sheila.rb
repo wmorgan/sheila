@@ -14,6 +14,7 @@ Camping.goes :Sheila
 class String
   def obfu; gsub(/( <.+?)@.+>$/, '\1@...>') end
   def prefix; self[0,8] end
+  def pluralize n; "#{n} #{self}#{n == 1 ? '' : 's'}" end
 end
 
 hostname = begin
@@ -95,6 +96,18 @@ module Sheila::Controllers
       @show_add_link = false
       @title = "Closed issues"
       render :index
+    end
+  end
+  class Search
+    def post
+      @query = @input.resolve "search[query]"
+      re = Regexp.new @query, true
+      @issues = Sheila.project.issues.select do |i|
+        i.title =~ re || i.desc =~ re ||
+          i.log_events.map { |time, who, what, comments| comments }.join(" ") =~ re
+      end.sort_by { |i| i.last_event_time || i.creation_time }.reverse
+      @show_add_link = true
+      render :search_results
     end
   end
   class TicketX
@@ -207,6 +220,15 @@ module Sheila::Views
   end
 
   def filter_list
+    div.searchbox do
+      form :method => 'POST', :action => R(Search) do
+        fieldset.search do
+          input :value => @input.resolve("search[query]"), :name => 'search[query]', :size => 10
+          input :name => 'submit', :value => 'search', :type => 'submit'
+        end
+      end
+    end
+
     div.filterlist do
       span "Issue filter: "
       a "[all]", :href => R(Index) unless @filter == :all
@@ -221,6 +243,15 @@ module Sheila::Views
         text " "
       end
       a "[unassigned]", :href => R(Unassigned) unless @filter == :unassigned
+    end
+  end
+
+  def search_results
+    filter_list
+    h2 "#{'result'.pluralize @issues.size} for #{@query.inspect}"
+
+    unless @issues.empty?
+      ticket_table @issues, @show_add_link
     end
   end
 
@@ -589,6 +620,13 @@ ul.events div.comment {
 }
 div.filterlist {
   text-align: right;
+}
+fieldset.search {
+  text-align: right;
+}
+fieldset.search input {
+  font-size: x-small;
+  padding: 3px;
 }
 END
 
