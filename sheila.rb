@@ -75,22 +75,25 @@ end
 module Sheila::Controllers
   class Index
     def get 
-      @filter = :all
-      @sort = :activity
+      @issues = Sheila.project.issues.sort_by { |i| i.last_event_time || i.creation_time }.reverse
+      @show_add_link = true
+      @title = "All issues"
       render :index
     end
   end
   class Open
     def get 
-      @filter = :open
-      @sort = :activity
+      @issues = Sheila.project.issues.select { |i| i.open? }.sort_by { |i| i.last_event_time || i.creation_time }.reverse
+      @show_add_link = true
+      @title = "Open issues"
       render :index
     end
   end
   class Closed
     def get 
-      @filter = :closed
-      @sort = :activity
+      @issues = Sheila.project.issues.select { |i| i.closed? }.sort_by { |i| i.last_event_time || i.creation_time }.reverse
+      @show_add_link = false
+      @title = "Closed issues"
       render :index
     end
   end
@@ -167,14 +170,14 @@ module Sheila::Controllers
     def get num
       @release = Sheila.project.releases[num.to_i] # see docs for Views#ticket
       @created, @desc = @release.log_events[0].first, @release.log_events[0].last
-      @filter = @release
+      @issues = Sheila.project.issues_for_release @release
       render :release
     end
   end
   class Unassigned
     def get
       @release = nil
-      @filter = :unassigned
+      @issues = Sheila.project.unassigned_issues
       render :release
     end
   end
@@ -223,25 +226,11 @@ module Sheila::Views
 
   def index
     filter_list
-    h2 "#{@filter.to_s.capitalize} issues"
-
-    issues = Sheila.project.issues.select do |i|
-      case @filter
-      when :all; true
-      when :open; i.open?
-      when :closed; i.closed?
-      end
-    end.sort_by do |i|
-      case @sort
-      when :activity; i.last_event_time || i.creation_time
-      when :create_time; i.creation_time
-      end
-    end.reverse
-
-    ticket_table issues, ([:all, :open].include? @filter)
+    h2 @title
+    ticket_table @issues, @show_add_link
   end
 
-  def ticket_table issues, add_link=false
+  def ticket_table issues, show_add_link
     table.tickets! do
       tr do
         th "ID"
@@ -252,7 +241,7 @@ module Sheila::Views
         td.unique ""
         td.title { a "Add a new issue", :href => R(New) }
         td.status ""
-      end if add_link
+      end if show_add_link
       issues.each do |issue|
         tr do
           td.unique issue.id.prefix
@@ -292,7 +281,7 @@ module Sheila::Views
     end
 
     h4 "Issues"
-    ticket_table(@release ? @release.issues_from(Sheila.project) : Sheila.project.unassigned_issues)
+    ticket_table(@issues, @release.nil? || @release.unreleased?)
   end
 
   def ticket
