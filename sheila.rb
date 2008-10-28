@@ -343,6 +343,14 @@ module Sheila::Views
     end
   end
 
+  ## removes any instances of the tags in +remove+ that have values of
+  ## false or nil. this is because they can't appear in the HTML, even
+  ## if they're empty.
+  def straighten_opts opts, remove=[:selected, :checked]
+    remove.each { |k| opts.delete(k) unless opts[k] }
+    opts
+  end
+
   def editor
     h2 "Submit a new #{Sheila.project.name} issue"
 
@@ -368,9 +376,14 @@ module Sheila::Views
         div.required do
           label.fieldname 'Issue type'
           div do
+
+            current_type = case(x = @input.resolve("ticket[type]"))
+              when ""; :bugfix
+              when String; x.intern
+            end
+
             Ditz::Issue::TYPES.each do |t|
-              # :checked here doesn't seem to work---it generates "checked=true" instead of "checked". :(
-              input :type => 'radio', :name => 'ticket[type]', :value => t.to_s, :id => "ticket[type]-#{t}", :checked => (@input.resolve("ticket[type]") == t.to_s)
+              input straighten_opts(:type => 'radio', :name => 'ticket[type]', :value => t.to_s, :id => "ticket[type]-#{t}", :checked => (current_type == t))
               label " #{t} ", :for => "ticket[type]-#{t}"
             end
           end
@@ -378,22 +391,21 @@ module Sheila::Views
         div.required do
           label.fieldname 'Release, if any', :for => 'ticket[release]'
           select.standard :name => 'ticket[release]' do
-            # likewise with :selected
-            option "No release", :selected => @input.resolve("ticket[release]").empty?, :value => ""
+            option "No release", straighten_opts(:selected => @input.resolve("ticket[release]").empty?, :value => "")
             Sheila.project.releases.sort_by { |r| r.release_time || Time.now }.reverse.each do |r|
               name = if r.released?
                 "#{r.name} (released #{r.release_time.ago})"
               else
                 r.name
               end
-              option name, :value => r.name, :selected => @input.resolve("ticket[release]") == r.name
+              option name, straighten_opts(:value => r.name, :selected => @input.resolve("ticket[release]") == r.name)
             end
           end
         end
         if Sheila.project.components.size > 1
           label.fieldname "Component", :for => 'ticket[component]'
           select.standard :name => 'ticket[component]' do
-            Sheila.project.components.each { |c| option c.name, :selected => @input.resolve("ticket[component]") == c.name }
+            Sheila.project.components.each { |c| option straighten_opts(c.name, :selected => @input.resolve("ticket[component]") == c.name) }
           end
         end
         div.buttons do
