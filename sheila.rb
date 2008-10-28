@@ -14,7 +14,16 @@ Camping.goes :Sheila
 class String
   def obfu; gsub(/( <.+?)@.+>$/, '\1@...>') end
   def prefix; self[0,8] end
-  def pluralize n; "#{n} #{self}#{n == 1 ? '' : 's'}" end
+end
+
+class Ditz::Release
+  def fancy_name
+    if released?
+      "#{name} (released #{release_time.ago} ago)"
+    else
+      name
+    end
+  end
 end
 
 hostname = begin
@@ -90,38 +99,53 @@ end
 module Sheila::Controllers
   class Index
     def get 
-      @issues = Sheila.project.issues.sort_by { |i| i.last_event_time || i.creation_time }.reverse
-      @show_add_link = true
-      @title = "All issues"
-      render :index
-    end
-  end
-  class Open
-    def get 
-      @issues = Sheila.project.issues.select { |i| i.open? }.sort_by { |i| i.last_event_time || i.creation_time }.reverse
-      @show_add_link = true
-      @title = "Open issues"
-      render :index
-    end
-  end
-  class Closed
-    def get 
-      @issues = Sheila.project.issues.select { |i| i.closed? }.sort_by { |i| i.last_event_time || i.creation_time }.reverse
-      @show_add_link = false
-      @title = "Closed issues"
-      render :index
-    end
-  end
-  class Search
-    def post
-      @query = @input.resolve "search[query]"
-      re = Regexp.new @query, true
+      ## process filter parameters
+      type, type_check = case(t = @input["type"])
+        when "open"; ["open", lambda { |i| i.open? }]
+        when "closed"; ["closed", lambda { |i| i.closed? }]
+        when "in_progress"; ["in progress", lambda { |i| i.in_progress? }]
+        end
+
+      release, release_check = case(r = @input["release"])
+        when "unassigned"; [:unassigned, lambda { |i| i.release.nil? }]
+        when String
+          release = Sheila.project.release_for r
+          [release, release && lambda { |i| i.release == release.name }]
+        end
+
+      component, component_check = case(c = @input["component"])
+        when String
+          component = Sheila.project.component_for c
+          [component, component && lambda { |i| i.component == component.name }]
+        end
+
+      query, query_check = case(q = @input["query"])
+        when /\S/
+          re = Regexp.new q, true
+          [q, lambda { |i| i.title =~ re || i.desc =~ re || i.log_events.map { |time, who, what, comments| comments }.join(" ") =~ re }]
+        end
+
+      ## build issue list
       @issues = Sheila.project.issues.select do |i|
-        i.title =~ re || i.desc =~ re ||
-          i.log_events.map { |time, who, what, comments| comments }.join(" ") =~ re
+        (type_check.nil? || type_check[i]) &&
+          (release_check.nil? || release_check[i]) &&
+          (component_check.nil? || component_check[i]) &&
+          (query_check.nil? || query_check[i])
       end.sort_by { |i| i.last_event_time || i.creation_time }.reverse
-      @show_add_link = true
-      render :search_results
+
+      ## build title
+      @title = [
+        @issues.size,
+        type,
+        (release == :unassigned ? "unassigned" : nil),
+        (component ? component.name : nil),
+        (@issues.size == 1 ? "issue" : "issues"),
+        (Ditz::Release === release ? "in #{release.name}" : nil),
+        (query ? "matching #{query.inspect}" : nil),
+      ].compact.join(" ")
+
+      ## go!
+      render :index
     end
   end
   class TicketX
@@ -232,29 +256,37 @@ module Sheila::Views
   end
 
   def filter_list
-    div.searchbox do
-      form :method => 'POST', :action => R(Search) do
-        fieldset.search do
-          input :value => @input.resolve("search[query]"), :name => 'search[query]', :size => 10
-          input :name => 'submit', :value => 'search', :type => 'submit'
+    form.filters :action => R(Index) do
+      fieldset.filters do
+        span "Issue status: "
+        select.filter :name => "type" do
+          option "all", straighten_opts(:selected => ["all", "", nil].member?(@input["type"]), :value => "")
+          option "open", straighten_opts(:selected => @input["type"] == "open", :value => "open")
+          option "closed", straighten_opts(:selected => @input["type"] == "closed", :value => "closed")
+          option "in progress", straighten_opts(:selected => @input["type"] == "in_progress", :value => "in_progress")
         end
-      end
-    end
-
-    div.filterlist do
-      span "Issue filter: "
-      a "[all]", :href => R(Index) unless @filter == :all
-      text " "
-      a "[open]", :href => R(Open) unless @filter == :open
-      text " "
-      a "[closed]", :href => R(Closed) unless @filter == :closed
-      text " "
-
-      Sheila.project.releases.each_with_index do |r, i|
-        a "[#{r.name}]", :href => R(ReleaseX, i) unless @filter == r
+        span " Release: "
+        select.filter :name => "release" do
+          option "all", straighten_opts(:selected => ["all", "", nil].member?(@input["release"]), :value => "")
+          Sheila.project.releases.sort_by { |r| r.release_time || Time.now }.reverse.each do |r|
+            option r.fancy_name, straighten_opts(:value => r.name, :selected => @input["release"] == r.name)
+          end
+          option "Unassigned", straighten_opts(:selected => @input["release"] == "unassigned", :value => "")
+        end
+        if Sheila.project.components.size > 1
+          span " Component: "
+          select.filter :name => "component" do
+            option "all", straighten_opts(:selected => ["all", "", nil].member?(@input["component"]), :value => "")
+            Sheila.project.components.each do |c|
+              option c.name, straighten_opts(:value => c.name, :selected => @input["component"] == c.name)
+            end
+          end
+        end
+        span " Search: "
+        input :value => @input["query"], :name => "query", :size => 10
         text " "
+        input :value => "Filter", :type => "submit"
       end
-      a "[unassigned]", :href => R(Unassigned) unless @filter == :unassigned
     end
   end
 
@@ -270,10 +302,10 @@ module Sheila::Views
   def index
     filter_list
     h2 @title
-    ticket_table @issues, @show_add_link
+    ticket_table @issues
   end
 
-  def ticket_table issues, show_add_link
+  def ticket_table issues
     h4 "Issues"
     table.tickets! do
       tr do
@@ -285,7 +317,7 @@ module Sheila::Views
         td.unique ""
         td.title { a "Add a new issue", :href => R(New) }
         td.status ""
-      end if show_add_link
+      end
       issues.each do |issue|
         tr do
           td.unique issue.id.prefix
@@ -448,12 +480,7 @@ module Sheila::Views
           select.standard :name => 'ticket[release]' do
             option "No release", straighten_opts(:selected => @input.resolve("ticket[release]").empty?, :value => "")
             Sheila.project.releases.sort_by { |r| r.release_time || Time.now }.reverse.each do |r|
-              name = if r.released?
-                "#{r.name} (released #{r.release_time.ago})"
-              else
-                r.name
-              end
-              option name, straighten_opts(:value => r.name, :selected => @input.resolve("ticket[release]") == r.name)
+              option r.fancy_name, straighten_opts(:value => r.name, :selected => @input.resolve("ticket[release]") == r.name)
             end
           end
         end
@@ -508,7 +535,7 @@ body { font: 0.75em/1.5 'Lucida Grande', sans-serif; color: #333; }
 * { margin: 0; padding: 0; }
 a { text-decoration: none; color: blue; }
 a:hover { text-decoration: underline; }
-h2 { font-size: 36px; font-weight: normal; line-height: 120%; padding-bottom: 0.5em; }
+h2 { font-size: 36px; font-weight: normal; line-height: 120%; padding-bottom: 0.5em; padding-top: 0.5em; }
 
 label.fieldname {
   font-size: large;
@@ -630,15 +657,12 @@ ul.events div.comment {
 .unique {
   color: #999;
 }
-div.filterlist {
-  text-align: right;
-}
-fieldset.search {
-  text-align: right;
-}
-fieldset.search input {
+fieldset.filters input {
   font-size: x-small;
-  padding: 3px;
+  padding: 1px;
+}
+form.filters {
+  text-align: right;
 }
 END
 
